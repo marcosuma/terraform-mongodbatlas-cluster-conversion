@@ -166,7 +166,7 @@ def replication_specs(cluster):
   advanced_replication_specs = []
   replication_specs = cluster.get("replication_specs")
   if replication_specs is None:
-    return []
+    return ""
 
   for replication_spec in replication_specs:
     advanced_replication_spec = {}
