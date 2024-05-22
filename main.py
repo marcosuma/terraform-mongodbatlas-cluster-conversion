@@ -4,10 +4,12 @@ import random
 # TODO missing depends_on and all the other terraform clauses
 # TODO bug: if there is no replication_specs in the input cluster, it won't be created in the advanced_cluster
 # TODO comments should not be skipped, should be transferred as they are
+# TODO handle lifecycle clause
 
 IN_CLUSTER = "IN_CLUSTER"
 OUT_CLUSTER = "OUT_CLUSTER"
 IN_COMMENT = "IN_COMMENT"
+IN_DEPENDS_ON = "IN_DEPENDS_ON"
 
 state = {
   "value": OUT_CLUSTER,
@@ -78,6 +80,16 @@ def look_for_fields(line: str):
   line = original_line.lstrip()
   parts = line.split(" ")
   attribute = parts[0]
+  if attribute == "depends_on":
+    rest = " ".join(parts[1:])
+    rest = rest.split("=")[1:]
+    if rest[0].strip() == "[":
+      curr_cluster_stack.append({"attr_name": "depends_on", "content": rest[0]})
+      state["prev_value"] = state["value"]
+      state["value"] = IN_DEPENDS_ON
+    else:
+      curr_cluster_stack[-1]["content"]["depends_on"] = rest[0]
+    return
   rest = " ".join(parts[1:])
   if rest.strip().startswith("{"):
     curr_cluster_stack.append({"attr_name": attribute, "content": {}})
@@ -92,10 +104,19 @@ def ignore_comment(line: str):
     state["value"] = state["prev_value"]
     return
 
+def migrate_as_is(line: str):
+  curr_content = curr_cluster_stack[-1]["content"]
+  curr_cluster_stack[-1]["content"] = curr_content + line
+  if line.find("]") != -1:
+    state["value"] = state["prev_value"]
+    curr_cluster_stack[-1]["content"]["depends_on"] = curr_cluster_stack.pop()["content"]
+  return
+
 state_to_function = {
   OUT_CLUSTER: look_for_cluster,
   IN_CLUSTER: look_for_fields,
   IN_COMMENT: ignore_comment,
+  IN_DEPENDS_ON: migrate_as_is,
 }
 
 def project_id(cluster):
@@ -183,6 +204,11 @@ def advanced_configuration(cluster):
   if cluster.get('advanced_configuration') is None:
     return ""
   return "advanced_configuration = {0}".format(cluster.get('advanced_configuration'))
+
+def depends_on(cluster):
+  if cluster.get('depends_on') is None:
+    return ""
+  return "depends_on = {0}".format(cluster.get('depends_on'))
 
 def replication_specs(cluster):
   advanced_replication_specs = []
@@ -376,6 +402,7 @@ for cluster in clusters:
   advanced_cluster["accept_data_risks_and_force_replica_set_reconfig"] = accept_data_risks_and_force_replica_set_reconfig(cluster)
   advanced_cluster["advanced_configuration"] = advanced_configuration(cluster)
   advanced_cluster["replication_specs"] = replication_specs(cluster)
+  advanced_cluster["depends_on"] = depends_on(cluster)
 
 
   advanced_cluster_tf_config = """
@@ -399,6 +426,7 @@ resource "mongodbatlas_advanced_cluster" {resource_name} {{
   {accept_data_risks_and_force_replica_set_reconfig}
   {advanced_configuration}
   {replication_specs}
+  {depends_on}
 }}""".format(
     resource_name=resource_name, 
     project_id=advanced_cluster['project_id'], 
@@ -420,6 +448,7 @@ resource "mongodbatlas_advanced_cluster" {resource_name} {{
     accept_data_risks_and_force_replica_set_reconfig=advanced_cluster['accept_data_risks_and_force_replica_set_reconfig'],
     advanced_configuration=advanced_cluster['advanced_configuration'],
     replication_specs=advanced_cluster['replication_specs'],
+    depends_on=advanced_cluster["depends_on"],
   )
   temp = advanced_cluster_tf_config
   advanced_cluster_tf_config = []
