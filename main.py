@@ -5,9 +5,6 @@ import random
 # TODO bug: if there is no replication_specs in the input cluster, it won't be created in the advanced_cluster
 # TODO comments should not be skipped, should be transferred as they are
 
-def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
-    return ''.join(random.choice(chars) for _ in range(size))
-
 IN_CLUSTER = "IN_CLUSTER"
 OUT_CLUSTER = "OUT_CLUSTER"
 IN_COMMENT = "IN_COMMENT"
