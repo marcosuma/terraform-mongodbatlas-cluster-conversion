@@ -2,15 +2,19 @@ import string
 import random
 
 # TODO missing depends_on and all the other terraform clauses
+# TODO bug: if there is no replication_specs in the input cluster, it won't be created in the advanced_cluster
+# TODO comments should not be skipped, should be transferred as they are
 
 def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
     return ''.join(random.choice(chars) for _ in range(size))
 
 IN_CLUSTER = "IN_CLUSTER"
 OUT_CLUSTER = "OUT_CLUSTER"
+IN_COMMENT = "IN_COMMENT"
 
 state = {
   "value": OUT_CLUSTER,
+  "prev_value": None,
   "nested_par": 0,
   "curr_cluster": -1
 }
@@ -44,14 +48,26 @@ def look_for_cluster(line: str):
     state["curr_cluster"] += 1
     curr_cluster_stack.append({"attr_name": "__root__", "content": {}})
     curr_cluster_stack[-1]["resource_name"] = resource_name
+    state["prev_value"] = state["value"]
     state["value"] = IN_CLUSTER
+    return
+  if line.strip().startswith("/*"):
+    state["prev_value"] = state["value"]
+    state["value"] = IN_COMMENT
+    return
 
 
 def look_for_fields(line: str):
+  original_line = line
   line = line.strip()
-  if line == "" or line.startswith("#"):
+  if line == "" or line.startswith("#") or line.startswith("//"):
+    return
+  if line.startswith("/*"):
+    state["prev_value"] = state["value"]
+    state["value"] = IN_COMMENT
     return
   if line.startswith("}") and len(curr_cluster_stack) == 1:
+    state["prev_value"] = state["value"]
     state["value"] = OUT_CLUSTER
     clusters.append(curr_cluster_stack.pop())
     return
@@ -62,18 +78,27 @@ def look_for_fields(line: str):
     curr_cluster_stack[-1]["content"][complex_attribute["attr_name"]].append(complex_attribute["content"])
     return
   
+  line = original_line.lstrip()
   parts = line.split(" ")
   attribute = parts[0]
-  rest = "".join(parts[1:])
+  rest = " ".join(parts[1:])
   if rest.strip().startswith("{"):
     curr_cluster_stack.append({"attr_name": attribute, "content": {}})
     return
   value = rest.split("=")[1:]
   curr_cluster_stack[-1]["content"][attribute] = value[0]
 
+def ignore_comment(line: str):
+  if line.find("*/") == -1:
+    return
+  if line.find("*/") != -1:
+    state["value"] = state["prev_value"]
+    return
+
 state_to_function = {
   OUT_CLUSTER: look_for_cluster,
   IN_CLUSTER: look_for_fields,
+  IN_COMMENT: ignore_comment,
 }
 
 def project_id(cluster):
@@ -163,7 +188,6 @@ def advanced_configuration(cluster):
   return "advanced_configuration = {0}".format(cluster.get('advanced_configuration'))
 
 def replication_specs(cluster):
-  # print(cluster)
   advanced_replication_specs = []
   replication_specs = cluster.get("replication_specs")
   if replication_specs is None:
@@ -333,7 +357,6 @@ filename = "main.tf"
 resources = read_terraform_file(filename)
 
 for cluster in clusters:
-  # print("Resource found: ", cluster)
   resource_name = cluster.get("resource_name")
   cluster = cluster.get("content")
   advanced_cluster = {}
@@ -359,7 +382,7 @@ for cluster in clusters:
 
 
   advanced_cluster_tf_config = """
-mongodbatlas_advanced_cluster {resource_name} {{
+resource "mongodbatlas_advanced_cluster" {resource_name} {{
   {project_id}
   {name}
   {cluster_type}
